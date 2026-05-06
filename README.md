@@ -216,6 +216,47 @@ The parent graph classifies the query and routes to a specialized subgraph:
 - **News query** → News Subgraph (search → sentiment → summary)
 - **Price query** → Price Subgraph (search → extract metrics → report)
 
+### Graph Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  PARENT GRAPH                                                │
+│                                                              │
+│   ┌──────────┐     ┌──────────────────┐    ┌─────────────┐  │
+│   │ __start__│────►│ classify_query   │    │   __end__   │  │
+│   └──────────┘     │ (news or price?) │    └──────▲──────┘  │
+│                    └────────┬─────────┘           │         │
+│                             │                     │         │
+│               query_type?   │                     │         │
+│                             │                     │         │
+│               "news" ───────┼──►┌────────────────┐│         │
+│                             │   │  NEWS SUBGRAPH ├┘         │
+│                             │   │  (own 3 nodes) │          │
+│                             │   └────────────────┘          │
+│               "price"───────┼──►┌────────────────┐          │
+│                             │   │ PRICE SUBGRAPH ├──────────┘
+│                             │   │  (own 3 nodes) │          │
+│                             │   └────────────────┘          │
+└──────────────────────────────────────────────────────────────┘
+
+Inside each subgraph (their own isolated graphs):
+
+NEWS SUBGRAPH:                    PRICE SUBGRAPH:
+start                             start
+  │                                 │
+  ▼                                 ▼
+search_news                       search_price
+  │                                 │
+  ▼                                 ▼
+analyze_sentiment                 extract_metrics
+  │                                 │
+  ▼                                 ▼
+write_news_summary                write_price_report
+  │                                 │
+  ▼                                 ▼
+end                               end
+```
+
 ### How State Flows Between Parent and Subgraph
 
 ```
