@@ -133,12 +133,86 @@ The LLM has an `ask_user` tool. When it recognizes an ambiguous query, it **call
 
 ---
 
+## Parallel Node Execution (`3_parallel_nodes.py`)
+
+### The Problem with Sequential Multi-Stock Research
+When comparing two stocks sequentially, every search waits for the previous one to finish:
+```
+Search Apple     → 2.5s wait
+Search Microsoft → 2.2s wait
+Total            → 4.7s
+```
+
+### The Parallel Solution
+LangGraph supports **fan-out** — one node connects to multiple nodes that fire simultaneously:
+```
+Search Apple    ─┐
+                 ├── both fire at the same time
+Search Microsoft─┘
+Total           → 2.5s  (just the slower one, not the sum)
+```
+
+### How It Works — Fan-out / Fan-in Pattern
+
+```
+                      ┌─────────────┐
+                      │  __start__  │
+                      └──────┬──────┘
+                             │
+                             ▼
+                  ┌────────────────────┐
+                  │   parse_question   │
+                  │ (extract 2 stocks) │
+                  └────┬──────────┬───┘
+                       │          │
+               FAN-OUT: both fire simultaneously
+                       │          │
+                       ▼          ▼
+             ┌──────────┐    ┌──────────┐
+             │ search_  │    │ search_  │
+             │ stock_1  │    │ stock_2  │
+             └────┬─────┘    └────┬─────┘
+                  │               │
+              FAN-IN: waits for BOTH to complete
+                       │          │
+                       └────┬─────┘
+                            ▼
+                  ┌──────────────────────┐
+                  │  generate_comparison │
+                  │  (has both results)  │
+                  └──────────┬───────────┘
+                             │
+                      ┌──────▼──────┐
+                      │   __end__   │
+                      └─────────────┘
+```
+
+### Key Concepts Unique to Parallel Execution
+
+| Concept | What it does |
+|---------|-------------|
+| `add_edge(node, node_a)` + `add_edge(node, node_b)` | Fan-out — fires both nodes simultaneously |
+| `Annotated[list, operator.add]` | Safely merges results from parallel nodes without overwriting |
+| Automatic fan-in | LangGraph waits for ALL branches before the next node — no explicit barrier needed |
+
+### Real Timing Output
+```
+[NODE: search_stock_1] ⚡ Starting search for 'Apple' (PARALLEL)
+[NODE: search_stock_2] ⚡ Starting search for 'Microsoft' (PARALLEL)  ← fired together
+[NODE: search_stock_2] ✅ Done in 2.2s
+[NODE: search_stock_1] ✅ Done in 2.5s
+Total wall-clock time: 3.5s   ← not 4.7s (sequential sum)
+```
+
+---
+
 ## Project Structure
 
 ```
 financial-research-assistant/
 ├── 1_langchain_approach.py   # Standard LangChain — demonstrates all 5 limitations
-├── 2_langgraph_approach.py   # LangGraph — solves all 5 problems
+├── 2_langgraph_approach.py   # LangGraph — solves all 5 problems with Human-in-the-Loop
+├── 3_parallel_nodes.py       # LangGraph — parallel node execution for multi-stock research
 ├── graph_diagram.png         # Visual graph architecture diagram
 ├── requirements.txt          # Python dependencies
 ├── .gitignore                # Excludes .env, venv, __pycache__
@@ -167,6 +241,9 @@ python 1_langchain_approach.py
 
 # Run LangGraph version (see the solutions)
 python 2_langgraph_approach.py
+
+# Run parallel nodes demo
+python 3_parallel_nodes.py
 ```
 
 ## Try These Queries
@@ -189,6 +266,14 @@ python 2_langgraph_approach.py
 | 3 | "Based on that, is Tesla a good buy?" | Remembers Tesla context (checkpointer memory) |
 | 4 | "Show me stock performance" | Asks "Which stock?" via interrupt — Human-in-the-Loop! |
 | 5 | Keep asking... | No prompt explosion — state managed by checkpointer |
+
+### On Parallel Nodes (`3_parallel_nodes.py`) — See the Speedup
+
+| # | Query | What to Notice |
+|---|-------|----------------|
+| 1 | "Compare Apple and Microsoft stocks" | Both searches fire simultaneously in logs |
+| 2 | "Compare Tesla and Toyota" | Watch timing — total ≈ slower search, not the sum |
+| 3 | "Compare Infosys and TCS" | `operator.add` merges both results into one list |
 
 ## Tech Stack
 
