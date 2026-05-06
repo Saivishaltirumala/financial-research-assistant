@@ -206,6 +206,64 @@ Total wall-clock time: 3.5s   ← not 4.7s (sequential sum)
 
 ---
 
+## Subgraphs (`4_subgraphs.py`)
+
+### What is a Subgraph?
+A subgraph is a **complete LangGraph graph** (its own State, nodes, edges) used as a **single node** inside a parent graph. Think of it like functions in programming — modular, reusable, isolated.
+
+### Use Case — Query Router
+The parent graph classifies the query and routes to a specialized subgraph:
+- **News query** → News Subgraph (search → sentiment → summary)
+- **Price query** → Price Subgraph (search → extract metrics → report)
+
+### How State Flows Between Parent and Subgraph
+
+```
+Parent State:   { question, query_type, final_answer }
+                      ↓                      ↑
+              (overlapping key)       (overlapping key)
+                      ↓                      ↑
+Subgraph State: { question,  <internal keys...>,  final_answer }
+                              ↑
+                   ISOLATED — parent never sees these
+```
+
+Only **overlapping keys** are the communication bridge. Internal keys (`raw_news`, `sentiment`, `raw_prices`, `key_metrics`) stay isolated inside the subgraph and never appear in the parent state.
+
+### How Conditional Routing Works
+```python
+parent_builder.add_node("news",  news_subgraph)   # node named "news"
+parent_builder.add_node("price", price_subgraph)  # node named "price"
+parent_builder.add_conditional_edges("classify_query", route_to_subgraph)
+```
+LangGraph auto-builds `{"news": "news", "price": "price"}` by scanning which nodes `classify_query` connects to. The routing function's return value is matched against this map. Node names **must match** the return values, or you pass an explicit map as the 3rd argument:
+```python
+add_conditional_edges("classify_query", route_fn, {"news": "news_subgraph_node", ...})
+```
+
+### Key Concepts
+
+| Concept | What it does |
+|---------|-------------|
+| `compiled_subgraph` as a node | `add_node("news", news_subgraph)` — entire subgraph = single node in parent |
+| Overlapping state keys | Only shared keys flow between parent ↔ subgraph |
+| State isolation | Internal keys stay inside subgraph, never pollute parent |
+| Routing by return value | Function returns node name string → LangGraph routes to that node |
+
+### Real Output
+```
+[PARENT GRAPH] Classified as: 'news' → routing to news subgraph
+
+  [NEWS SUBGRAPH] Node 1/3: Searching news...
+  [NEWS SUBGRAPH] Node 2/3: Analyzing sentiment... → Neutral
+  [NEWS SUBGRAPH] Node 3/3: Writing final summary...
+
+[NOTE] Parent state has: ['question', 'query_type', 'final_answer']
+[NOTE] Subgraph-internal keys (raw_news, sentiment) are NOT in parent state!
+```
+
+---
+
 ## Project Structure
 
 ```
@@ -213,6 +271,7 @@ financial-research-assistant/
 ├── 1_langchain_approach.py   # Standard LangChain — demonstrates all 5 limitations
 ├── 2_langgraph_approach.py   # LangGraph — solves all 5 problems with Human-in-the-Loop
 ├── 3_parallel_nodes.py       # LangGraph — parallel node execution for multi-stock research
+├── 4_subgraphs.py            # LangGraph — subgraphs for modular, isolated query routing
 ├── graph_diagram.png         # Visual graph architecture diagram
 ├── requirements.txt          # Python dependencies
 ├── .gitignore                # Excludes .env, venv, __pycache__
@@ -244,6 +303,9 @@ python 2_langgraph_approach.py
 
 # Run parallel nodes demo
 python 3_parallel_nodes.py
+
+# Run subgraphs demo
+python 4_subgraphs.py
 ```
 
 ## Try These Queries
@@ -274,6 +336,14 @@ python 3_parallel_nodes.py
 | 1 | "Compare Apple and Microsoft stocks" | Both searches fire simultaneously in logs |
 | 2 | "Compare Tesla and Toyota" | Watch timing — total ≈ slower search, not the sum |
 | 3 | "Compare Infosys and TCS" | `operator.add` merges both results into one list |
+
+### On Subgraphs (`4_subgraphs.py`) — See Modular Routing
+
+| # | Query | What to Notice |
+|---|-------|----------------|
+| 1 | "What is the latest news on Tesla?" | Routes to news subgraph — 3 internal nodes run |
+| 2 | "What is Apple's current PE ratio?" | Routes to price subgraph — different internal flow |
+| 3 | Check `[NOTE]` in output | Parent state has only 3 keys — internal keys are isolated |
 
 ## Tech Stack
 

@@ -301,9 +301,31 @@ Reply with ONLY the word: news or price"""),
 def route_to_subgraph(state: MainState) -> str:
     """
     ROUTING FUNCTION: Determines which subgraph to invoke next.
-    Returns the node name to route to — LangGraph uses this to follow the edge.
+
+    HOW THE ROUTING ACTUALLY WORKS:
+    When you call add_conditional_edges("classify_query", route_to_subgraph),
+    LangGraph scans the graph for all nodes that "classify_query" has outgoing
+    edges to — in our case "news" and "price" — and builds this internal map:
+        { "news": "news", "price": "price" }
+    (return value string → node name to jump to)
+
+    So when this function returns "news", LangGraph looks up "news" in that map
+    and routes execution to the node named "news" (which IS the news subgraph).
+
+    This works because we DELIBERATELY named our nodes "news" and "price" to
+    match exactly what this function returns. If node names were different
+    (e.g., "news_analysis_subgraph"), you'd need an explicit map as 3rd arg:
+        add_conditional_edges(
+            "classify_query",
+            route_to_subgraph,
+            {
+                "news":  "news_analysis_subgraph",   # return value → node name
+                "price": "price_analysis_subgraph"
+            }
+        )
+    Without that explicit map, LangGraph would fail to find the node and crash.
     """
-    return state["query_type"]  # Returns "news" or "price"
+    return state["query_type"]  # Returns "news" or "price" → matched to node name
 
 
 # Assemble the Parent Graph
@@ -315,6 +337,7 @@ parent_builder.add_node("classify_query", classify_query)
 # Add the SUBGRAPHS as NODES in the parent graph.
 # This is the core of subgraphs: compiled subgraphs become nodes!
 # The parent treats each entire subgraph (3 nodes, 2 edges) as a SINGLE node.
+# Node names are "news" and "price" — must match what route_to_subgraph returns.
 parent_builder.add_node("news",  news_subgraph)    # The entire news subgraph = one node
 parent_builder.add_node("price", price_subgraph)   # The entire price subgraph = one node
 
@@ -322,8 +345,9 @@ parent_builder.add_node("price", price_subgraph)   # The entire price subgraph =
 parent_builder.add_edge(START, "classify_query")
 
 # Conditional edge: classify → news subgraph OR price subgraph
-# `route_to_subgraph` returns "news" or "price" and LangGraph routes accordingly.
-# Each subgraph, once it completes, writes `final_answer` back to MainState.
+# LangGraph auto-builds { "news": "news", "price": "price" } because those are
+# the only two nodes connected from "classify_query". The routing function's
+# return value is matched against this map to find the next node to execute.
 parent_builder.add_conditional_edges("classify_query", route_to_subgraph)
 
 # Both subgraph nodes lead to END after completing
