@@ -1,8 +1,8 @@
-# Financial Research Assistant — LangChain vs LangGraph vs CrewAI
+# Financial Research Assistant — LangChain vs LangGraph vs CrewAI vs AutoGen
 
 ## What This Project Demonstrates
 
-This project builds the **same financial research chatbot multiple times** — using standard LangChain, LangGraph, and CrewAI — to expose why each framework was created, what problems it solves, and when to choose one over another.
+This project builds the **same financial research chatbot multiple times** — using standard LangChain, LangGraph, CrewAI, and AutoGen — to expose why each framework was created, what problems it solves, and when to choose one over another.
 
 The assistant uses **DuckDuckGo Search** to pull real-time stock news and prices, and **Groq's LLM API** (Llama 3.1) for generating responses.
 
@@ -506,6 +506,110 @@ in whatever order it decides → synthesizes final answer
 
 ---
 
+## AutoGen Approach (`7_autogen_approach.py`)
+
+### What is AutoGen?
+
+AutoGen is Microsoft's open-source multi-agent framework built around **conversational agents**. Instead of tasks flowing through a pipeline (CrewAI) or nodes firing in a graph (LangGraph), agents **talk to each other** in a back-and-forth conversation until the problem is solved.
+
+Every agent is a chat participant. The "work" emerges from the dialogue — not from a predefined task list or graph edges.
+
+### The Three Mental Models
+
+| Framework | Mental Model | How work gets done |
+|---|---|---|
+| **LangGraph** | You draw a graph | Execution follows nodes + edges you wired |
+| **CrewAI** | You describe a crew | Manager assigns tasks, specialists complete them |
+| **AutoGen** | You create a group chat | Agents message each other until done |
+
+### Core Concepts
+
+| Concept | What it is | LangGraph equivalent | CrewAI equivalent |
+|---|---|---|---|
+| `AssistantAgent` | LLM-powered agent with a name + `system_message` | Node function + system prompt | `Agent(role, goal, backstory)` |
+| `FunctionTool` | Wraps a Python function so agents can call it | LangChain tool via `bind_tools()` | `@tool` decorator |
+| `RoundRobinGroupChat` | Agents take turns in fixed order | Sequential edges | `Process.sequential` |
+| `SelectorGroupChat` | Selector LLM picks who speaks next | Supervisor + conditional edges | `Process.hierarchical` |
+| `TextMentionTermination` | Stop when any agent says a keyword | `END` node | All tasks complete |
+| `team.run(task=...)` | Start the conversation | `graph.invoke({...})` | `crew.kickoff({...})` |
+
+### Key Insight — Conversation IS the Shared Memory
+
+In other frameworks you wire agents together explicitly:
+- **LangGraph**: `agent_outputs: Annotated[list, operator.add]` — agents write to shared state
+- **CrewAI**: `context=[news_task, price_task]` — prior outputs fed to next task
+
+In **AutoGen**, `risk_agent` simply reads the messages above it in the conversation. No explicit wiring needed — the full conversation history is automatically visible to every agent that speaks.
+
+```
+USER:        "Should I invest in Tesla?"
+NEWS_AGENT:  [searches] → NEWS REPORT: ...
+PRICE_AGENT: [searches] → PRICE REPORT: ...
+RISK_AGENT:  [reads conversation above] → RISK ASSESSMENT: ... TERMINATE
+```
+
+### Two Execution Modes
+
+**RoundRobin** — agents speak in fixed order every round:
+```
+news_agent → price_agent → risk_agent → [TERMINATE] → stop
+(always all 3, regardless of question — same limitation as CrewAI sequential)
+```
+
+**SelectorGroupChat** — a selector LLM reads the conversation and picks who speaks next:
+```
+[selector] "No NEWS REPORT yet" → news_agent
+[selector] "No PRICE REPORT yet" → price_agent
+[selector] "Both reports present" → risk_agent → TERMINATE
+```
+
+### AutoGen vs LangGraph vs CrewAI
+
+| | **AutoGen** | **CrewAI** | **LangGraph** |
+|---|---|---|---|
+| **API style** | Conversational — agents chat | Declarative — describe crew | Imperative — build graph |
+| **Shared memory** | Conversation history (automatic) | `context=[]` on Task | `TypedDict` State |
+| **Dynamic routing** | Selector LLM (SelectorGroupChat) | Manager (Process.hierarchical) | Supervisor node + conditional edges |
+| **Human-in-the-Loop** | ✅ Natural (UserProxyAgent) | ❌ Not supported | ✅ `interrupt()` + `Command(resume=)` |
+| **Code execution** | ✅ Built-in (UserProxyAgent) | ❌ Not built-in | ❌ Not built-in |
+| **Parallel execution** | ❌ | ❌ | ✅ Fan-out/fan-in |
+| **Async required** | ✅ Yes — `asyncio.run()` | ❌ Synchronous | ❌ Synchronous |
+| **Output structure** | List of messages (parse manually) | `CrewOutput` with `.raw` | Typed `State` dict |
+| **Termination** | Explicit keyword / max turns | All tasks complete | `END` node |
+| **Best for** | Iterative coding, debate, open-ended research | Fixed pipelines, prototyping | Production, HitL, custom flow control |
+
+### Advantages of AutoGen
+
+- **Natural iteration** — agent can call tools multiple times per turn, re-search, refine, without retry logic
+- **Conversation = shared memory** — no explicit state wiring; every agent sees everything that was said
+- **Human-in-the-Loop is natural** — add a `UserProxyAgent` that requires human input at each turn
+- **Code execution built-in** — `UserProxyAgent` can run Python/shell locally; killer feature for coding agents
+- **Flexible termination** — compose conditions: `TextMentionTermination("DONE") | MaxMessageTermination(20)`
+
+### Disadvantages of AutoGen
+
+- **Async-only** — all `team.run()` calls require `asyncio.run()` — more boilerplate than CrewAI/LangGraph
+- **Unstructured output** — result is a list of messages; no typed state fields or `expected_output`
+- **Conversations can drift** — RoundRobin speaks even when an agent has nothing useful to add
+- **Less predictable flow** — harder to guarantee strict ordering compared to LangGraph edges or CrewAI tasks
+- **Verbose debugging** — long conversation logs; finding the error message is harder than LangGraph's stream
+
+### When to Use AutoGen
+
+| Use **AutoGen** when | Use **LangGraph** when | Use **CrewAI** when |
+|---|---|---|
+| Writing + running code iteratively | Full flow control + observability | Quick prototype, fixed pipeline |
+| Agents need to debate/critique work | Human-in-the-Loop with graph resume | Plain-English agent definitions |
+| Human approves each step | Parallel execution needed | Structured output matters |
+| Open-ended, exploratory research | Subgraph isolation needed | Non-technical team |
+
+> **One-line summary of all three:**
+> AutoGen = *"Put agents in a room and let them talk it out"* (conversational, iterative)
+> CrewAI = *"Tell me WHO and WHAT, I'll figure out HOW"* (declarative, fast)
+> LangGraph = *"You control WHO, WHAT, and HOW — completely"* (imperative, precise)
+
+---
+
 ## Project Structure
 
 ```
@@ -516,6 +620,7 @@ financial-research-assistant/
 ├── 4_subgraphs.py            # LangGraph — subgraphs for modular, isolated query routing
 ├── 5_multi_agent.py          # LangGraph — true multi-agent system with supervisor pattern
 ├── 6_crewai_approach.py      # CrewAI — same multi-agent system, declarative approach
+├── 7_autogen_approach.py     # AutoGen — same system, conversational agent approach
 ├── graph_diagram.png         # Visual graph architecture diagram
 ├── requirements.txt          # Python dependencies
 ├── .gitignore                # Excludes .env, venv, __pycache__
@@ -556,6 +661,9 @@ python 5_multi_agent.py
 
 # Run CrewAI multi-agent demo
 python 6_crewai_approach.py
+
+# Run AutoGen multi-agent demo
+python 7_autogen_approach.py
 ```
 
 ## Try These Queries
@@ -616,9 +724,19 @@ python 6_crewai_approach.py
 | 3 | "What is the latest news on Tesla?" | Hierarchical | Manager decides delegation — output may differ from sequential |
 | 4 | Compare with `5_multi_agent.py` | Both | Same result, ~half the code — but general knowledge still triggers all agents |
 
+### On AutoGen (`7_autogen_approach.py`) — See Conversational Multi-Agent
+
+| # | Query | Mode | What to Notice |
+|---|---|---|---|
+| 1 | "What is the latest news on Tesla?" | RoundRobin | `[NEWS_AGENT]` → `[PRICE_AGENT]` → `[RISK_AGENT]` turns visible in logs |
+| 2 | "Should I invest in Apple?" | RoundRobin | Watch agents call `web_search` multiple times per turn — natural iteration |
+| 3 | "Should I invest in Microsoft?" | Selector | Selector LLM routes dynamically — check which agent it picks after each turn |
+| 4 | Compare with CrewAI | Both | Same structured output, but no `context=[]` — conversation history is the shared memory |
+| 5 | Note `asyncio.run(...)` wrapper | Both | AutoGen is async — only framework in this project that requires it |
+
 ## Tech Stack
 
 - **LLM**: Llama 3.1 8B via Groq (free tier)
 - **Search**: DuckDuckGo (no API key needed)
-- **Frameworks**: LangChain (problem demo) + LangGraph (solution) + CrewAI (comparison)
+- **Frameworks**: LangChain · LangGraph · CrewAI · AutoGen
 - **Language**: Python 3.x

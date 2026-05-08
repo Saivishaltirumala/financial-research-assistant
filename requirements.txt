@@ -8,3 +8,7 @@ ddgs
 crewai
 crewai-tools
 litellm
+pyautogen
+autogen-agentchat
+autogen-core
+autogen-ext
