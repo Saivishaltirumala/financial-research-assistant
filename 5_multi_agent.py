@@ -132,7 +132,33 @@ search_tool = DuckDuckGoSearchResults(name="web_search", num_results=2)
 # - Knows when enough information has been gathered → says FINISH
 
 # =================================================================================
-# TRUE DYNAMIC SUPERVISOR PROMPT — No hardcoded order
+# AGENT DESCRIPTIONS — Single source of truth
+# =================================================================================
+# WHY THIS APPROACH?
+# You might wonder: "can the supervisor just read node docstrings like tools do?"
+# Answer: NO — tools work via bind_tools() which has a specific mechanism to read
+# @tool docstrings and inject them as schemas into the LLM's context automatically.
+# Nodes are just Python functions — there is no bind_nodes() equivalent.
+# LangGraph never sends node docstrings to any LLM. The supervisor has ZERO
+# awareness of news_agent_node, price_agent_node etc. as Python functions.
+#
+# SOLUTION: Define descriptions here in one dict, then inject them into the
+# supervisor prompt dynamically. This way:
+# - Descriptions live in ONE place (not duplicated in docstring + prompt)
+# - Adding a new agent = add one entry here, prompt updates automatically
+# - Same descriptions could also be shown to users, logged, or used elsewhere
+AGENT_DESCRIPTIONS = {
+    "news_agent":  "searches for latest news, announcements, and events about a stock",
+    "price_agent": "searches for stock price, PE ratio, market cap, and financial metrics",
+    "risk_agent":  "assesses investment risk — requires BOTH news AND price data to work properly",
+}
+
+# Build the agents section of the prompt dynamically from the dict above
+# Output: "- news_agent: searches for latest news...\n- price_agent: ..."
+_agents_info = "\n".join([f"- {name}: {desc}" for name, desc in AGENT_DESCRIPTIONS.items()])
+
+# =================================================================================
+# SUPERVISOR PROMPT — Built from AGENT_DESCRIPTIONS, no hardcoded order
 # =================================================================================
 # Previously our prompt was a lookup table disguised as intelligence:
 #   "For news questions → call news_agent"
@@ -140,16 +166,13 @@ search_tool = DuckDuckGoSearchResults(name="web_search", num_results=2)
 # That's NOT dynamic — it's just IF/ELSE rules written in English.
 # The supervisor wasn't reasoning, it was pattern-matching.
 #
-# The TRUE multi-agent power: supervisor reads what's been gathered so far,
-# thinks about what's STILL MISSING, and picks the most useful next agent.
-# It decides the order at RUNTIME based on the question and accumulated knowledge.
-# We give it one hard constraint (risk needs news+price) and let it reason freely.
-SUPERVISOR_PROMPT = """You are a supervisor managing a team of financial research agents.
+# Now: supervisor reads what's been gathered, thinks about what's STILL MISSING,
+# and picks the most useful next agent. Order is decided at runtime through reasoning.
+# We only give it one hard constraint (risk needs news+price) and let it reason freely.
+SUPERVISOR_PROMPT = f"""You are a supervisor managing a team of financial research agents.
 
 Your available agents:
-- news_agent  : searches for latest news, announcements, and events about a stock
-- price_agent : searches for stock price, PE ratio, market cap, and financial metrics
-- risk_agent  : assesses investment risk — requires news AND price data to work properly
+{_agents_info}
 
 Your job:
 1. Read the user's question carefully
@@ -157,13 +180,10 @@ Your job:
 3. Think: what information is still MISSING to fully answer the question?
 4. Pick the agent that fills the most important gap — or say FINISH if nothing is missing
 
-Think step by step before deciding:
-- If the question is only about news/events → only news_agent is needed
-- If the question is only about price/metrics → only price_agent is needed
-- If the question needs risk assessment → you need news AND price first, then risk_agent
-- If the existing reports already fully answer the question → say FINISH immediately
+Rules:
 - NEVER call an agent already listed under "Agents already called"
 - Only hard rule: never call risk_agent unless both news_agent AND price_agent have reported
+- Say FINISH as soon as the question is fully answerable from existing reports
 
 Reply with ONLY one word: news_agent, price_agent, risk_agent, or FINISH"""
 
