@@ -151,10 +151,11 @@ AGENT_DESCRIPTIONS = {
     "news_agent":  "searches for latest news, announcements, and events about a stock",
     "price_agent": "searches for stock price, PE ratio, market cap, and financial metrics",
     "risk_agent":  "assesses investment risk — requires BOTH news AND price data to work properly",
+    "FINISH":      "no agent needed — question is general knowledge the supervisor can answer directly",
 }
 
 # Build the agents section of the prompt dynamically from the dict above
-# Output: "- news_agent: searches for latest news...\n- price_agent: ..."
+# Output: "- news_agent: searches for latest news...\n- price_agent: ...\n- FINISH: ..."
 _agents_info = "\n".join([f"- {name}: {desc}" for name, desc in AGENT_DESCRIPTIONS.items()])
 
 # =================================================================================
@@ -169,18 +170,28 @@ _agents_info = "\n".join([f"- {name}: {desc}" for name, desc in AGENT_DESCRIPTIO
 # Now: supervisor reads what's been gathered, thinks about what's STILL MISSING,
 # and picks the most useful next agent. Order is decided at runtime through reasoning.
 # We only give it one hard constraint (risk needs news+price) and let it reason freely.
+#
+# KEY ADDITION: FINISH is now also valid on the FIRST call if the question is general
+# knowledge (definitions, concepts, how things work). No agents needed — the supervisor
+# answers directly from its own training knowledge. This prevents wasteful agent calls
+# for questions like "What is a stock?" or "What is the difference between ETF and mutual fund?"
 SUPERVISOR_PROMPT = f"""You are a supervisor managing a team of financial research agents.
 
-Your available agents:
+Your available agents and when to use them:
 {_agents_info}
 
 Your job:
 1. Read the user's question carefully
 2. Read what agents have already reported
 3. Think: what information is still MISSING to fully answer the question?
-4. Pick the agent that fills the most important gap — or say FINISH if nothing is missing
+4. Pick the agent that fills the most important gap — or say FINISH
 
-Rules:
+When to say FINISH immediately (without calling ANY agent):
+- The question asks for a definition, explanation, or concept (e.g. "What is a stock?",
+  "What is the difference between ETF and mutual fund?", "How does PE ratio work?")
+- These are general knowledge questions answerable from training data — no live data needed
+
+Rules for stock-specific questions (when you DO call agents):
 - NEVER call an agent already listed under "Agents already called"
 - Only hard rule: never call risk_agent unless both news_agent AND price_agent have reported
 - Say FINISH as soon as the question is fully answerable from existing reports
@@ -363,17 +374,41 @@ Based on the above team reports, assess the investment risk.""")
 def write_final_answer(state: MultiAgentState) -> dict:
     """
     Called when supervisor decides FINISH.
-    Synthesizes all agent reports into one coherent final answer.
-    """
-    print(f"\n[SUPERVISOR] All agents done. Synthesizing final answer...")
-    all_reports = "\n\n".join(state["agent_outputs"])
 
-    response = supervisor_llm.invoke([
-        SystemMessage(content="You are a financial supervisor. Synthesize all agent reports "
-                              "into a clear, concise final answer for the user. "
-                              "Be direct and structured. Keep it under 200 words."),
-        HumanMessage(content=f"User Question: {state['question']}\n\nAgent Reports:\n{all_reports}")
-    ])
+    TWO SCENARIOS:
+    1. Agents WERE called → synthesize their reports into one final answer.
+       The supervisor reads all accumulated agent_outputs and stitches them
+       into a clear, structured response for the user.
+
+    2. NO agents were called → question was general knowledge.
+       The supervisor never dispatched any specialist. agent_outputs is empty.
+       In this case, the supervisor answers directly from its own training knowledge
+       — no live data needed, no search required.
+       Example: "What is a stock?" → answered instantly, zero agent calls wasted.
+    """
+    called = state.get("called_agents", [])
+
+    if not called:
+        # General knowledge path — supervisor answers directly, no agent reports to synthesize
+        print(f"\n[SUPERVISOR] General knowledge question — answering directly (no agents needed)...")
+        response = supervisor_llm.invoke([
+            SystemMessage(content="You are a knowledgeable financial supervisor. "
+                                  "Answer the user's question clearly and concisely from your own knowledge. "
+                                  "No need to search — this is a general knowledge / concept question. "
+                                  "Keep it under 200 words."),
+            HumanMessage(content=f"Question: {state['question']}")
+        ])
+    else:
+        # Specialist agents were called — synthesize their reports
+        print(f"\n[SUPERVISOR] All agents done. Synthesizing final answer...")
+        all_reports = "\n\n".join(state["agent_outputs"])
+        response = supervisor_llm.invoke([
+            SystemMessage(content="You are a financial supervisor. Synthesize all agent reports "
+                                  "into a clear, concise final answer for the user. "
+                                  "Be direct and structured. Keep it under 200 words."),
+            HumanMessage(content=f"User Question: {state['question']}\n\nAgent Reports:\n{all_reports}")
+        ])
+
     return {"final_answer": response.content}
 
 
@@ -445,7 +480,11 @@ def research(question: str):
     print("FINAL ANSWER:")
     print("=" * 60)
     print(result["final_answer"])
-    print(f"\n[AGENTS CALLED]: {len(result['agent_outputs'])} specialist(s) contributed")
+    agents_called = result.get("called_agents", [])
+    if agents_called:
+        print(f"\n[AGENTS CALLED]: {agents_called}")
+    else:
+        print(f"\n[AGENTS CALLED]: none — supervisor answered directly from general knowledge")
 
 
 def main():
@@ -453,7 +492,9 @@ def main():
     print("  LANGGRAPH — MULTI-AGENT SYSTEM DEMO")
     print("  (Supervisor re-evaluates after every agent)")
     print("=" * 60)
-    print("\nSupervisor REASONS about what's missing — order decided at runtime:\n")
+    print("\nSupervisor REASONS about what's needed — order decided at runtime:\n")
+    print("  → 'What is a stock?' or 'What is the difference between ETF and mutual fund?'")
+    print("     Supervisor thinks: general knowledge, no live data needed → FINISH immediately\n")
     print("  → 'What is the latest news on Tesla?'")
     print("     Supervisor thinks: only news needed → news_agent → FINISH\n")
     print("  → 'What is Apple stock price and PE ratio?'")
@@ -461,8 +502,6 @@ def main():
     print("  → 'Should I invest in Microsoft stock?'")
     print("     Supervisor thinks: need news+price first, then risk")
     print("     → news_agent → price_agent → risk_agent → FINISH\n")
-    print("  → 'Is Tesla overvalued given recent news?'")
-    print("     Supervisor decides order itself based on reasoning\n")
     print("Type 'quit' to exit.\n")
 
     while True:
