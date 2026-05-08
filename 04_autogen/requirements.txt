@@ -1,0 +1,8 @@
+pyautogen
+autogen-agentchat
+autogen-core
+autogen-ext
+langchain_community
+duckduckgo-search
+ddgs
+python-dotenv

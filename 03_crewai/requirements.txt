@@ -1,0 +1,7 @@
+crewai
+crewai-tools
+litellm
+langchain_community
+duckduckgo-search
+ddgs
+python-dotenv

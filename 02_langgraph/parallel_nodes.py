@@ -74,7 +74,10 @@ from typing_extensions import TypedDict
 
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
-from langchain_community.tools import DuckDuckGoSearchResults
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.tools import ddg_search
+from shared.config import GROQ_MODEL
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from langgraph.graph import StateGraph, START, END
@@ -116,10 +119,10 @@ class StockComparisonState(TypedDict):
 # =================================================================================
 # STEP 2: Initialize LLM and Search Tool
 # =================================================================================
-llm = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0.3)
+llm = ChatGroq(model_name=GROQ_MODEL, temperature=0.3)
 
 # Same tool name trick from file 2 — prevent Llama from hallucinating tool names
-search_tool = DuckDuckGoSearchResults(name="web_search", num_results=2)
+search_tool = ddg_search
 
 
 # =================================================================================

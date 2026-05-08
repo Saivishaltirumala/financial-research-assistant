@@ -1,5 +1,18 @@
+# Secrets
 .env
+
+# Virtual environment
 venv/
+.venv/
+
+# Python cache
 __pycache__/
 *.pyc
+*.pyo
+
+# macOS
 .DS_Store
+
+# IDE
+.vscode/
+.idea/

@@ -60,7 +60,10 @@ from typing import Annotated
 from typing_extensions import TypedDict
 
 from langchain_groq import ChatGroq
-from langchain_community.tools import DuckDuckGoSearchResults
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from shared.tools import ddg_search
+from shared.config import GROQ_MODEL
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
@@ -100,7 +103,7 @@ class State(TypedDict):
 # sometimes hallucinate tool names — e.g., calling "brave_search" instead of
 # the default "duckduckgo_results_json". A simple, generic name like "web_search"
 # prevents this confusion. This is a common gotcha with tool-calling on smaller models.
-search_tool = DuckDuckGoSearchResults(name="web_search", num_results=3)
+search_tool = ddg_search
 
 
 # =================================================================================
@@ -149,7 +152,7 @@ tools = [search_tool, ask_user]
 
 # Initialize the LLM
 llm = ChatGroq(
-    model_name="llama-3.1-8b-instant",
+    model_name=GROQ_MODEL,
     temperature=0.3,
 )
 
