@@ -223,16 +223,32 @@ llm = LLM(
 # the agent reads to decide when and how to call this tool.
 # A good docstring = agent uses the tool correctly.
 # A vague docstring = agent calls it at wrong times or with wrong inputs.
+#
+# WHY THE EXPLICIT NAME MATTERS (Llama 3.1 8B quirk):
+# Llama 3.1 8B has a strong training prior to call a search tool named "brave_search".
+# If the tool name in the prompt is vague or absent, the model will hallucinate
+# "brave_search" regardless of what tools are actually registered — and Groq will
+# reject it with a tool_use_failed error because "brave_search" was not in the request.
+#
+# The fix (same approach used in 2_langgraph_approach.py):
+# 1. Name the @tool decorator and the inner DuckDuckGoSearchResults BOTH "web_search"
+#    → the tool schema sent to Groq has name="web_search"
+# 2. Start the docstring with "web_search:" so the model reads the exact tool name
+#    before reading what it does → anchors the model to use the right name
+# 3. Repeat the tool name in each agent's goal (see STEP 3 below)
+#    → even in a long agent prompt, the model always sees "use web_search" nearby
 
 _search = DuckDuckGoSearchResults(name="web_search", num_results=2)
 
 @tool("web_search")
 def web_search(query: str) -> str:
     """
-    Search the web for financial news, stock prices, PE ratios, market cap,
-    and other real-time financial data. Use this tool when you need current
-    information that may not be in your training data.
+    web_search: Search the web for real-time financial data.
+    Use this tool to find current stock news, prices, PE ratios, market cap,
+    earnings reports, and other information not in your training data.
     Input: a search query string (e.g., 'Tesla stock price today PE ratio')
+    IMPORTANT: This is the ONLY search tool available. Always call web_search,
+    never brave_search or any other tool name.
     """
     return _search.invoke(query)
 
@@ -257,15 +273,17 @@ def web_search(query: str) -> str:
 news_agent = Agent(
     role="Financial News Analyst",
     goal=(
-        "Search for the latest financial news, announcements, and events about "
-        "the stock in question. Provide a structured report with key headlines, "
-        "overall sentiment, and any important events."
+        "Use the web_search tool to find the latest financial news, announcements, "
+        "and events about the stock in question. Provide a structured report with "
+        "key headlines, overall sentiment, and any important events. "
+        "Always call web_search — it is your only search tool."
     ),
     backstory=(
         "You are a specialist in financial journalism with 10 years of experience "
         "tracking market-moving news. You know how to identify signal from noise "
         "in financial media, and you always structure your findings clearly so "
-        "other analysts on your team can build on your work."
+        "other analysts on your team can build on your work. "
+        "You only use the web_search tool — no other search tools exist."
     ),
     tools=[web_search],   # This agent CAN search the web
     llm=llm,
@@ -275,15 +293,17 @@ news_agent = Agent(
 price_agent = Agent(
     role="Stock Price & Metrics Specialist",
     goal=(
-        "Search for current stock price, P/E ratio, market cap, 52-week range, "
-        "and recent percentage change. Provide a structured metrics report that "
-        "other analysts can reference."
+        "Use the web_search tool to find current stock price, P/E ratio, market cap, "
+        "52-week range, and recent percentage change. Provide a structured metrics "
+        "report that other analysts can reference. "
+        "Always call web_search — it is your only search tool."
     ),
     backstory=(
         "You are a quantitative analyst specializing in stock valuation metrics. "
         "You are precise with numbers and always note when data may be delayed "
         "or unavailable. Your reports are used by risk analysts to make "
-        "investment recommendations."
+        "investment recommendations. "
+        "You only use the web_search tool — no other search tools exist."
     ),
     tools=[web_search],   # This agent CAN search the web
     llm=llm,
@@ -294,7 +314,8 @@ risk_agent = Agent(
     role="Investment Risk Assessor",
     goal=(
         "Synthesize the news report and price metrics report provided by your "
-        "teammates to produce a balanced risk assessment with a clear recommendation."
+        "teammates to produce a balanced risk assessment with a clear recommendation. "
+        "Do NOT search the web — you have no search tools."
     ),
     backstory=(
         "You are a senior investment risk analyst with expertise in combining "
