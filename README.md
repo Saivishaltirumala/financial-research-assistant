@@ -305,6 +305,120 @@ add_conditional_edges("classify_query", route_fn, {"news": "news_subgraph_node",
 
 ---
 
+## Multi-Agent System (`5_multi_agent.py`)
+
+### Why This Is Different from Subgraphs
+
+| | `4_subgraphs.py` — Modular Pipeline | `5_multi_agent.py` — True Multi-Agent |
+|---|---|---|
+| Routing | Decided ONCE upfront by `classify_query` | Supervisor RE-EVALUATES after every agent |
+| Agent awareness | Subgraphs are isolated — don't see each other | All agents share state — risk agent reads news + price reports |
+| LLM per node | One shared LLM | Each agent has its own LLM + system prompt |
+| Flow | Fixed sequence inside subgraph | Dynamic — supervisor decides order at runtime |
+| General knowledge | Always runs subgraph nodes | Supervisor answers directly, zero agents called |
+
+### The Supervisor Pattern
+
+Every agent reports **back to the supervisor** after completing. The supervisor sees the full picture and decides who to call next. This loop continues until the supervisor says `FINISH`.
+
+```
+START
+  │
+  ▼
+SUPERVISOR (LLM) ◄──────────────────────────────────────┐
+  │                                                       │
+  │  Decides who to call next:                           │
+  │                                                       │
+  ├─► NEWS AGENT (own LLM + search) ────────────────────►│
+  │      "Here's what I found about news..."             │
+  │                                                       │
+  ├─► PRICE AGENT (own LLM + search) ───────────────────►│
+  │      "Here's the price data I found..."              │
+  │                                                       │
+  ├─► RISK AGENT (own LLM, reads team's output) ────────►│
+  │      "Based on news + price, here's my risk view..." │
+  │                                                       │
+  └─► FINISH ──► FINAL ANSWER NODE ──► END               │
+                                                          │
+          ◄──── Supervisor sees ALL outputs, re-evaluates┘
+```
+
+### General Knowledge Shortcut
+
+A key improvement: the supervisor can say `FINISH` **before calling any agent** when the question is general knowledge — definitions, concepts, how things work. No live data is needed for these.
+
+```
+"What is a stock?"
+  │
+  ▼
+SUPERVISOR (first evaluation)
+  → "This is general knowledge. I can answer directly."
+  → Decision: FINISH  (zero agents called)
+  │
+  ▼
+FINAL ANSWER NODE
+  → Supervisor answers from its own training knowledge
+  → [AGENTS CALLED]: none
+
+"Should I invest in Tesla?"
+  │
+  ▼
+SUPERVISOR → news_agent → SUPERVISOR → price_agent → SUPERVISOR → risk_agent → SUPERVISOR → FINISH
+```
+
+### Key Multi-Agent Properties Demonstrated
+
+| Property | How It Works |
+|---|---|
+| **Supervisor re-evaluates** | After each agent, supervisor runs again and reads all accumulated reports |
+| **Own LLM per agent** | `supervisor_llm`, `news_llm`, `price_llm`, `risk_llm` — each with its own system prompt |
+| **Shared memory** | `agent_outputs: Annotated[list, operator.add]` — every agent appends, all agents can read |
+| **Dynamic ordering** | Supervisor picks the next agent at runtime based on what's still missing |
+| **Agent collaboration** | `risk_agent` reads `news_agent` + `price_agent` reports before assessing risk |
+| **Loop guard** | `called_agents` list passed to supervisor — it never calls the same agent twice |
+| **General knowledge path** | Supervisor answers directly when no live data is needed — zero agent calls wasted |
+
+### AGENT_DESCRIPTIONS — Single Source of Truth
+
+```python
+AGENT_DESCRIPTIONS = {
+    "news_agent":  "searches for latest news, announcements, and events about a stock",
+    "price_agent": "searches for stock price, PE ratio, market cap, and financial metrics",
+    "risk_agent":  "assesses investment risk — requires BOTH news AND price data to work properly",
+    "FINISH":      "no agent needed — question is general knowledge the supervisor can answer directly",
+}
+```
+
+This dict is injected dynamically into the supervisor prompt. Adding a new agent = one entry here, prompt updates automatically. No duplication between docstrings and prompts.
+
+### Real Output Comparison
+
+**General knowledge question:**
+```
+[SUPERVISOR] Re-evaluating... (0 agents called so far: [])
+[SUPERVISOR] Decision: → FINISH
+[SUPERVISOR] General knowledge question — answering directly (no agents needed)...
+[AGENTS CALLED]: none — supervisor answered directly from general knowledge
+```
+
+**Stock research question:**
+```
+[SUPERVISOR] Re-evaluating... (0 agents called so far: [])
+[SUPERVISOR] Decision: → news_agent
+[NEWS AGENT] Activated — researching news independently...
+[SUPERVISOR] Re-evaluating... (1 agents called so far: ['news_agent'])
+[SUPERVISOR] Decision: → price_agent
+[PRICE AGENT] Activated — researching price data independently...
+[SUPERVISOR] Re-evaluating... (2 agents called so far: ['news_agent', 'price_agent'])
+[SUPERVISOR] Decision: → risk_agent
+[RISK AGENT] Activated — reading team reports and assessing risk...
+[SUPERVISOR] Re-evaluating... (3 agents called so far: [...])
+[SUPERVISOR] Decision: → FINISH
+[AGENTS CALLED]: ['news_agent', 'price_agent', 'risk_agent']
+```
+
+---
+
 ## Project Structure
 
 ```
@@ -313,6 +427,7 @@ financial-research-assistant/
 ├── 2_langgraph_approach.py   # LangGraph — solves all 5 problems with Human-in-the-Loop
 ├── 3_parallel_nodes.py       # LangGraph — parallel node execution for multi-stock research
 ├── 4_subgraphs.py            # LangGraph — subgraphs for modular, isolated query routing
+├── 5_multi_agent.py          # LangGraph — true multi-agent system with supervisor pattern
 ├── graph_diagram.png         # Visual graph architecture diagram
 ├── requirements.txt          # Python dependencies
 ├── .gitignore                # Excludes .env, venv, __pycache__
@@ -347,6 +462,9 @@ python 3_parallel_nodes.py
 
 # Run subgraphs demo
 python 4_subgraphs.py
+
+# Run multi-agent system demo
+python 5_multi_agent.py
 ```
 
 ## Try These Queries
@@ -385,6 +503,18 @@ python 4_subgraphs.py
 | 1 | "What is the latest news on Tesla?" | Routes to news subgraph — 3 internal nodes run |
 | 2 | "What is Apple's current PE ratio?" | Routes to price subgraph — different internal flow |
 | 3 | Check `[NOTE]` in output | Parent state has only 3 keys — internal keys are isolated |
+
+### On Multi-Agent System (`5_multi_agent.py`) — See True Agent Collaboration
+
+| # | Query | What to Notice |
+|---|-------|----------------|
+| 1 | "What is a stock?" | Supervisor says FINISH immediately — zero agents called, answers directly |
+| 2 | "What is the difference between ETF and mutual fund?" | Same — general knowledge path, no live data wasted |
+| 3 | "What is the latest news on Tesla?" | Supervisor calls only news_agent → FINISH |
+| 4 | "What is Apple's PE ratio?" | Supervisor calls only price_agent → FINISH |
+| 5 | "Should I invest in Microsoft stock?" | Supervisor calls news → price → risk → FINISH (order at runtime) |
+| 6 | Watch `[SUPERVISOR] Re-evaluating...` logs | See supervisor re-evaluate after EVERY agent |
+| 7 | Watch `[AGENTS CALLED]:` in output | Zero agents for general knowledge; specialists for stock questions |
 
 ## Tech Stack
 
