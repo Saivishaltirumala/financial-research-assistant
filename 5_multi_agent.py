@@ -131,24 +131,39 @@ search_tool = DuckDuckGoSearchResults(name="web_search", num_results=2)
 # - Re-evaluates EVERY time an agent completes (dynamic, not one-time)
 # - Knows when enough information has been gathered → says FINISH
 
+# =================================================================================
+# TRUE DYNAMIC SUPERVISOR PROMPT — No hardcoded order
+# =================================================================================
+# Previously our prompt was a lookup table disguised as intelligence:
+#   "For news questions → call news_agent"
+#   "For investment questions → call news_agent, then price_agent, then risk_agent"
+# That's NOT dynamic — it's just IF/ELSE rules written in English.
+# The supervisor wasn't reasoning, it was pattern-matching.
+#
+# The TRUE multi-agent power: supervisor reads what's been gathered so far,
+# thinks about what's STILL MISSING, and picks the most useful next agent.
+# It decides the order at RUNTIME based on the question and accumulated knowledge.
+# We give it one hard constraint (risk needs news+price) and let it reason freely.
 SUPERVISOR_PROMPT = """You are a supervisor managing a team of financial research agents.
 
 Your available agents:
 - news_agent  : searches for latest news, announcements, and events about a stock
 - price_agent : searches for stock price, PE ratio, market cap, and financial metrics
-- risk_agent  : assesses investment risk based on news and price data already gathered
+- risk_agent  : assesses investment risk — requires news AND price data to work properly
 
 Your job:
-1. Look at the user's question and what agents have already reported
-2. Decide which agent to call NEXT, or say FINISH if you have enough information
+1. Read the user's question carefully
+2. Read what agents have already reported
+3. Think: what information is still MISSING to fully answer the question?
+4. Pick the agent that fills the most important gap — or say FINISH if nothing is missing
 
-Rules:
-- NEVER call an agent that is listed under "Agents already called"
-- For news/event questions → call news_agent, then FINISH
-- For price/valuation questions → call price_agent, then FINISH
-- For risk/investment/should I buy questions → call news_agent, then price_agent, then risk_agent, then FINISH
-- Only call risk_agent AFTER both news_agent AND price_agent have reported
-- Say FINISH as soon as the question can be answered from existing reports
+Think step by step before deciding:
+- If the question is only about news/events → only news_agent is needed
+- If the question is only about price/metrics → only price_agent is needed
+- If the question needs risk assessment → you need news AND price first, then risk_agent
+- If the existing reports already fully answer the question → say FINISH immediately
+- NEVER call an agent already listed under "Agents already called"
+- Only hard rule: never call risk_agent unless both news_agent AND price_agent have reported
 
 Reply with ONLY one word: news_agent, price_agent, risk_agent, or FINISH"""
 
@@ -418,13 +433,16 @@ def main():
     print("  LANGGRAPH — MULTI-AGENT SYSTEM DEMO")
     print("  (Supervisor re-evaluates after every agent)")
     print("=" * 60)
-    print("\nTry different questions and see which agents get called:\n")
+    print("\nSupervisor REASONS about what's missing — order decided at runtime:\n")
     print("  → 'What is the latest news on Tesla?'")
-    print("     (supervisor calls: news_agent → FINISH)\n")
+    print("     Supervisor thinks: only news needed → news_agent → FINISH\n")
     print("  → 'What is Apple stock price and PE ratio?'")
-    print("     (supervisor calls: price_agent → FINISH)\n")
+    print("     Supervisor thinks: only price needed → price_agent → FINISH\n")
     print("  → 'Should I invest in Microsoft stock?'")
-    print("     (supervisor calls: news_agent → price_agent → risk_agent → FINISH)\n")
+    print("     Supervisor thinks: need news+price first, then risk")
+    print("     → news_agent → price_agent → risk_agent → FINISH\n")
+    print("  → 'Is Tesla overvalued given recent news?'")
+    print("     Supervisor decides order itself based on reasoning\n")
     print("Type 'quit' to exit.\n")
 
     while True:
