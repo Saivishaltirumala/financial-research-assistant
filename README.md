@@ -1,8 +1,8 @@
-# Financial Research Assistant — LangChain vs LangGraph
+# Financial Research Assistant — LangChain vs LangGraph vs CrewAI
 
 ## What This Project Demonstrates
 
-This project builds the **same stock market chatbot twice** — once with standard LangChain (GenAI) and once with LangGraph (Agentic AI) — to expose why LangGraph was created and how it solves LangChain's fundamental limitations.
+This project builds the **same financial research chatbot multiple times** — using standard LangChain, LangGraph, and CrewAI — to expose why each framework was created, what problems it solves, and when to choose one over another.
 
 The assistant uses **DuckDuckGo Search** to pull real-time stock news and prices, and **Groq's LLM API** (Llama 3.1) for generating responses.
 
@@ -419,6 +419,93 @@ This dict is injected dynamically into the supervisor prompt. Adding a new agent
 
 ---
 
+## CrewAI Approach (`6_crewai_approach.py`)
+
+### What is CrewAI?
+
+CrewAI is a high-level, **declarative** multi-agent framework. Instead of building graphs with nodes and edges (LangGraph), you describe:
+- **WHO** the agents are — role, goal, backstory
+- **WHAT** they need to do — Tasks with descriptions and expected outputs
+- **HOW** they collaborate — a Crew with a Process mode
+
+CrewAI handles orchestration, tool routing, and task context passing internally. You don't write any of that plumbing yourself.
+
+### Core Concepts
+
+| Concept | What it is | LangGraph equivalent |
+|---|---|---|
+| `Agent` | An autonomous worker with role, goal, backstory, tools, and LLM | A node function + its system prompt + LLM |
+| `Task` | A unit of work: description + expected_output + assigned agent | What happens inside a node function |
+| `context=[task1, task2]` | Feed prior task outputs to the next agent automatically | Reading from `state["agent_outputs"]` |
+| `Crew` | Orchestrates agents + tasks with a Process | `graph.invoke({...})` |
+| `Process.sequential` | Tasks run in fixed order: news → price → risk | Hardcoded sequential edges |
+| `Process.hierarchical` | Manager agent delegates dynamically | LangGraph supervisor pattern |
+
+### The Same 3-Agent System — Two Modes
+
+**Sequential** (simple, fixed order):
+```
+news_task → price_task → risk_task
+(always all 3, regardless of the question)
+```
+
+**Hierarchical** (dynamic, manager decides):
+```
+MANAGER (auto-generated) → delegates to news, price, risk agents
+in whatever order it decides → synthesizes final answer
+```
+
+### CrewAI vs LangGraph — Head to Head
+
+| | CrewAI | LangGraph (`5_multi_agent.py`) |
+|---|---|---|
+| **Code volume** | ~150 lines | ~300 lines |
+| **API style** | Declarative — describe WHO and WHAT | Imperative — you build HOW |
+| **Agent definitions** | Plain English: role/goal/backstory | Python functions + system prompts |
+| **Task sharing** | `context=[task1, task2]` on Task | `Annotated[list, operator.add]` in State |
+| **Supervisor** | Auto-generated (black box) | You write `SUPERVISOR_PROMPT` yourself |
+| **Human-in-the-Loop** | ❌ Not supported | ✅ `interrupt()` + `Command(resume=)` |
+| **Parallel execution** | ❌ Not natively | ✅ Fan-out/fan-in with operator.add |
+| **Subgraph isolation** | ❌ No equivalent | ✅ Isolated state per subgraph |
+| **General knowledge skip** | ❌ Always runs all tasks | ✅ Supervisor says FINISH immediately |
+| **Mid-run observability** | verbose=True (rich but unstructured) | `graph.stream()` — event per node |
+| **Custom routing logic** | ❌ Fixed to sequential or hierarchical | ✅ Full conditional edges, any pattern |
+| **Prototyping speed** | ✅ Fast — less boilerplate | ❌ More setup required |
+
+### Advantages of CrewAI
+
+- **Less code** — no State TypedDict, no graph builder, no add_node/add_edge
+- **Readable** — role/goal/backstory is plain English; non-engineers can adjust agents
+- **Built-in task context passing** — `context=[]` shares outputs without a shared state dict
+- **Built-in memory** — short-term, long-term, entity memory available out of the box
+- **Faster prototyping** — define agents and tasks, call `kickoff()`. Great for demos
+
+### Disadvantages of CrewAI
+
+- **No Human-in-the-Loop** — cannot pause mid-execution, ask the user, and resume
+- **Less flow control** — you cannot add custom routing, retries, or mixed patterns
+- **Hierarchical manager is a black box** — can't inject your own supervisor prompt
+- **All tasks always run** — sequential mode runs all tasks even for simple questions (wasteful)
+- **Harder to debug in production** — no structured event stream like `graph.stream()`
+- **No subgraph isolation** — no equivalent to keeping internal state hidden from other agents
+
+### When to Use CrewAI vs LangGraph
+
+| Use **CrewAI** when | Use **LangGraph** when |
+|---|---|
+| Prototyping quickly | Human-in-the-Loop is required |
+| Agent roles are stable, workflow is fixed | Precise routing and custom logic needed |
+| Sequential pipelines (report generation, research) | Parallel execution needed for speed |
+| Team is non-technical, readable configs matter | Production systems needing observability |
+| Hierarchical delegation is good enough | Subgraph state isolation is required |
+| You don't need to skip agents for simple questions | General knowledge questions should skip agents |
+
+> **One-line summary:**
+> CrewAI = *"Tell me WHO and WHAT, I'll figure out HOW"* (declarative, fast)
+> LangGraph = *"You control WHO, WHAT, and HOW — completely"* (imperative, precise)
+
+---
+
 ## Project Structure
 
 ```
@@ -428,6 +515,7 @@ financial-research-assistant/
 ├── 3_parallel_nodes.py       # LangGraph — parallel node execution for multi-stock research
 ├── 4_subgraphs.py            # LangGraph — subgraphs for modular, isolated query routing
 ├── 5_multi_agent.py          # LangGraph — true multi-agent system with supervisor pattern
+├── 6_crewai_approach.py      # CrewAI — same multi-agent system, declarative approach
 ├── graph_diagram.png         # Visual graph architecture diagram
 ├── requirements.txt          # Python dependencies
 ├── .gitignore                # Excludes .env, venv, __pycache__
@@ -465,6 +553,9 @@ python 4_subgraphs.py
 
 # Run multi-agent system demo
 python 5_multi_agent.py
+
+# Run CrewAI multi-agent demo
+python 6_crewai_approach.py
 ```
 
 ## Try These Queries
@@ -516,9 +607,18 @@ python 5_multi_agent.py
 | 6 | Watch `[SUPERVISOR] Re-evaluating...` logs | See supervisor re-evaluate after EVERY agent |
 | 7 | Watch `[AGENTS CALLED]:` in output | Zero agents for general knowledge; specialists for stock questions |
 
+### On CrewAI (`6_crewai_approach.py`) — See Declarative Multi-Agent
+
+| # | Query | Mode | What to Notice |
+|---|---|---|---|
+| 1 | "What is the latest news on Tesla?" | Sequential | All 3 tasks always run — no skipping (CrewAI limitation) |
+| 2 | "Should I invest in Apple?" | Sequential | news → price → risk in fixed order, risk reads both via `context=` |
+| 3 | "What is the latest news on Tesla?" | Hierarchical | Manager decides delegation — output may differ from sequential |
+| 4 | Compare with `5_multi_agent.py` | Both | Same result, ~half the code — but general knowledge still triggers all agents |
+
 ## Tech Stack
 
 - **LLM**: Llama 3.1 8B via Groq (free tier)
 - **Search**: DuckDuckGo (no API key needed)
-- **Frameworks**: LangChain (problem demo) + LangGraph (solution)
+- **Frameworks**: LangChain (problem demo) + LangGraph (solution) + CrewAI (comparison)
 - **Language**: Python 3.x

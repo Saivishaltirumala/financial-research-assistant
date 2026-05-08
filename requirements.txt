@@ -5,3 +5,6 @@ langgraph
 python-dotenv
 duckduckgo-search
 ddgs
+crewai
+crewai-tools
+litellm
