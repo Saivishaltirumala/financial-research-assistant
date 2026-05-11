@@ -1,0 +1,21 @@
+# Agent servers — FastAPI + Uvicorn for the HTTP layer
+fastapi>=0.115.0
+uvicorn>=0.30.0
+
+# Orchestrator HTTP client — sends task requests to agent servers
+httpx>=0.27.0
+
+# LangGraph for the supervisor loop in orchestrator.py
+langgraph>=0.2.0
+
+# LLM (same Groq + LangChain stack as the other modules)
+langchain-groq>=0.1.9
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+duckduckgo-search>=6.0.0
+
+# Pydantic v2 — FastAPI uses it for request/response models
+pydantic>=2.0.0
+
+# .env loading
+python-dotenv>=1.0.0
